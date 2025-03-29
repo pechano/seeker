@@ -1,7 +1,8 @@
 package main
 
 import (
-	"bytes"
+	"embed"
+	"encoding/gob"
 	"fmt"
 	"index/suffixarray"
 	"log"
@@ -19,19 +20,13 @@ import (
 type PDF struct {
 	Path         string
 	Filename     string
-	plaintext    string
-	numpages     int
-	pages        []pdf.Page
-	pageContents []pageData
-	resultchan   chan int
-	index        *suffixarray.Index
-	buf          []byte
-	minuteType   string
+	Numpages     int
+	PageContents []pageData
 }
 
 type pageData struct {
-	pageNumber int
-	pageText   string
+	PageNumber int
+	PageText   string
 	pageIndex  *suffixarray.Index
 }
 
@@ -56,8 +51,12 @@ var PageID int
 var PageIDptr *int
 var err error
 
-func main() {
+// needed for release and distribution, bot during development and debugging
+//
+//go:embed index.html pagesnip.html previewsnip.html resultsnip.html htmx.min.js
+var staticFiles embed.FS
 
+func main() {
 	var minuteList []PDF
 	currentResults = &searchHits
 	DocIDptr = &DocID
@@ -141,12 +140,12 @@ func seekCollection(searchterm string, collection []PDF) (results []result) {
 		var result result
 		result.Matchfile = file
 
-		for i := 0; i < file.numpages; i++ {
+		for i := 0; i < file.Numpages; i++ {
 
 			var resultPage PageResult
 			resultPage.PageFile = file.Path
 			resultPage.PageNumber = i + 1
-			resultPage.Index = file.pageContents[i].pageIndex.Lookup([]byte(searchterm), -1)
+			resultPage.Index = file.PageContents[i].pageIndex.Lookup([]byte(searchterm), -1)
 			if len(resultPage.Index) == 0 {
 				continue
 			}
@@ -189,6 +188,25 @@ func ListFiles(ext string, path string) ([]string, error) {
 
 func scanforminutes() (collection []PDF, err error) {
 
+	if _, err := os.Stat("cache.gob"); !os.IsNotExist(err) {
+
+		var index_from_cache []PDF
+		cacheFile, err := os.Open("cache.gob")
+		check(err)
+		cacheDecoder := gob.NewDecoder(cacheFile)
+		err = cacheDecoder.Decode(&index_from_cache)
+		check(err)
+
+		for i := 0; i < len(index_from_cache); i++ {
+
+			for j := 0; j < len(index_from_cache[i].PageContents); j++ {
+				index_from_cache[i].PageContents[j].pageIndex = suffixarray.New([]byte(index_from_cache[i].PageContents[j].PageText))
+
+			}
+		}
+		return index_from_cache, nil
+	}
+
 	minutespath := filepath.Join("data")
 	var cleanlist []string
 	cleanlist, err = ListFiles(".pdf", minutespath)
@@ -201,25 +219,18 @@ func scanforminutes() (collection []PDF, err error) {
 			fmt.Println("error opening file")
 			return []PDF{}, err
 		}
-		var buf bytes.Buffer
-		b, err := r.GetPlainText()
-		if err != nil {
-			fmt.Println("error creating buffer")
-			return []PDF{}, err
-		}
-
-		buf.ReadFrom(b)
-		index := suffixarray.New(buf.Bytes())
 		content.Path = minutes
 		content.Filename = filepath.Base(minutes)
-		content.buf = buf.Bytes()
-		content.plaintext = buf.String()
-		content.numpages = r.NumPage()
-		content.pages = getPages(r)
-		content.pageContents = getIndexedPages(r)
-		content.index = index
+		content.Numpages = r.NumPage()
+		content.PageContents = getIndexedPages(r)
 		collection = append(collection, content)
 	}
+
+	file, err := os.Create("cache.gob")
+	cacheEncoder := gob.NewEncoder(file)
+	err = cacheEncoder.Encode(collection)
+
+	check(err)
 	return collection, nil
 }
 
@@ -228,9 +239,9 @@ func getIndexedPages(r *pdf.Reader) (pages []pageData) {
 		var page pageData
 		b, err := r.Page(i).GetPlainText(nil)
 
-		page.pageText = b
+		page.PageText = b
 		page.pageIndex = suffixarray.New([]byte(b))
-		page.pageNumber = i + 1
+		page.PageNumber = i + 1
 
 		check(err)
 
@@ -244,20 +255,6 @@ func getPages(r *pdf.Reader) (pages []pdf.Page) {
 		pages = append(pages, page)
 	}
 	return
-}
-func readPages(r []pdf.Page) (pageContents []string) {
-	for _, page := range r {
-		pageText, err := page.GetPlainText(nil)
-		if err != nil {
-			fmt.Print(err)
-		}
-		pageContents = append(pageContents, pageText)
-	}
-	return
-}
-
-func (p *PDF) seeker(searchterm string) {
-
 }
 
 func getStringFromIndex(data []byte, index int) string {
