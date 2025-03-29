@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+
+{{ range $i, $e := . }}
+
+<div hx-post="/getpreview/{{ $i }}" hx-target="#pdf_preview" hx-swap="innerHTML">
+	Page {{ .PageNumber }} : {{ len .Index }} hits
+
+</div>
+
+{{ end }}
+
+
+
+
+</html>

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="X-UA-Compatible" content="ie=edge">
+	<title>Seeker</title>
+	<script src="/htmx.min.js"></script>
+
+	<style>
+		.column {
+			float: left;
+			width: 33.33%;
+		}
+
+		/* Clear floats after the columns */
+		.row:after {
+			content: "";
+			display: table;
+			clear: both;
+		}
+	</style>
+
+</head>
+
+<body>
+	<div class="row">
+
+		<div class="column">
+			<form id='form' hx-encoding='multipart/form-data' hx-post='/search'
+				hx-target="#result_documents" hx-swap="innerHTML">
+				<select name="context">
+					<option value="all">ALL</option>
+					<option value="wg">WG</option>
+					<option value="ca">CA</option>
+					<option value="bpc">BPC</option>
+				</select>
+
+				<label>search term:</label><br />
+				<input type="text" name="term"><br />
+
+				<input type="submit" value="Search" /><br />
+
+			</form>
+		</div>
+		<div class="column">
+			Status:
+		</div>
+	</div>
+
+	<div class="row">
+		<div class="column">
+
+			<h1>document results</h1>
+
+			<div id="result_documents">
+			</div>
+
+		</div>
+
+		<div class="column">
+			<h1>page context results</h1>
+
+			<div id="result_pages">
+			</div>
+		</div>
+
+		<div class="column">
+			<h1>preview</h1>
+			<div id="pdf_preview">
+				testing
+			</div>
+		</div>
+
+	</div>
+</body>
+
+</html>
