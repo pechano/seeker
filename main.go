@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"index/suffixarray"
 	"log"
@@ -14,7 +15,7 @@ import (
 	"time"
 
 	"github.com/dslipak/pdf"
-	webview "github.com/webview/webview_go"
+	// webview "github.com/webview/webview_go"
 )
 
 type PDF struct {
@@ -41,6 +42,12 @@ type PageResult struct {
 	Index      []int
 }
 
+type State struct {
+	Page      int
+	File      string
+	Highlight string
+}
+
 var searchHits []result
 var currentResults *[]result
 
@@ -49,6 +56,13 @@ var DocIDptr *int
 
 var PageID int
 var PageIDptr *int
+
+var ActiveSearchTerm string
+var ActiveSearchTermptr *string
+
+var ActiveState State
+var ActiveStateptr *State
+
 var err error
 
 // needed for release and distribution, bot during development and debugging
@@ -61,6 +75,8 @@ func main() {
 	currentResults = &searchHits
 	DocIDptr = &DocID
 	PageIDptr = &PageID
+	ActiveSearchTermptr = &ActiveSearchTerm
+	ActiveStateptr = &ActiveState
 
 	fmt.Println("scanning for all minutes:")
 	beforescan := time.Now()
@@ -75,12 +91,16 @@ func main() {
 		fmt.Println(len(minuteList))
 		r.ParseMultipartForm(10 << 20)
 		seekerTerm := r.FormValue("term")
+
 		fmt.Println(r.FormValue("context"))
 
 		fmt.Println("searching collection for: " + seekerTerm)
 		beforesearch := time.Now()
 		*currentResults = seekCollection(seekerTerm, minuteList)
 		aftersearch := time.Since(beforesearch)
+		*ActiveSearchTermptr = seekerTerm
+
+		ActiveStateptr.Highlight = seekerTerm
 
 		fmt.Println("there was a total of " + fmt.Sprint(len(searchHits)) + " hits for the term: " + seekerTerm + ". It took " + aftersearch.String())
 		resultTemp := template.Must(template.ParseFiles("resultsnip.html"))
@@ -92,20 +112,25 @@ func main() {
 
 	http.HandleFunc("/expandresult/{id}", expandHandler)
 	http.HandleFunc("/getpreview/{id}", previewHandler)
+	http.HandleFunc("/getCurrentState", getStateHandler)
 
 	fmt.Println("starting server at localhost:1337 for testing purposes. Press Ctrl+c to cancel.")
 
-	go http.ListenAndServe(":1337", nil)
-	debug := true
-	w := webview.New(debug)
-	if w == nil {
-		log.Fatalln("Failed to load webview.")
-	}
-	defer w.Destroy()
-	w.SetTitle("Minimal webview example")
-	w.SetSize(800, 600, webview.HintNone)
-	w.Navigate("http://127.0.0.1:1337")
-	w.Run()
+	http.ListenAndServe(":1337", nil)
+	/*
+	   debug := true
+	   w := webview.New(debug)
+
+	   	if w == nil {
+	   		log.Fatalln("Failed to load webview.")
+	   	}
+
+	   defer w.Destroy()
+	   w.SetTitle("Minimal webview example")
+	   w.SetSize(800, 600, webview.HintNone)
+	   w.Navigate("http://127.0.0.1:1337")
+	   w.Run()
+	*/
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +146,8 @@ func expandHandler(w http.ResponseWriter, r *http.Request) {
 	*DocIDptr, err = strconv.Atoi(key)
 	check(err)
 	fmt.Println(searchHits[DocID].Matchfile.Filename)
+	ActiveStateptr.File = searchHits[DocID].Matchfile.Path
+
 	pageTemplate := template.Must(template.ParseFiles("pagesnip.html"))
 	err = pageTemplate.Execute(w, searchHits[DocID].Matches)
 
@@ -132,7 +159,16 @@ func previewHandler(w http.ResponseWriter, r *http.Request) {
 	*PageIDptr, err = strconv.Atoi(key)
 	check(err)
 	pageTemplate := template.Must(template.ParseFiles("previewsnip.html"))
+	ActiveStateptr.Page = searchHits[DocID].Matches[PageID].PageNumber
+	fmt.Println(ActiveState.Page)
 	err = pageTemplate.Execute(w, searchHits[DocID].Matches[PageID])
+
+}
+
+func getStateHandler(w http.ResponseWriter, r *http.Request) {
+
+	fmt.Println(ActiveState)
+	json.NewEncoder(w).Encode(ActiveState)
 
 }
 func seekCollection(searchterm string, collection []PDF) (results []result) {

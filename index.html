@@ -7,6 +7,8 @@
 	<meta http-equiv="X-UA-Compatible" content="ie=edge">
 	<title>Seeker</title>
 	<script src="/htmx.min.js"></script>
+	<script src="/pdf.mjs" type="module"></script>
+	<script src="/script.js" type="module"></script>
 
 	<style>
 		.column {
@@ -38,7 +40,7 @@
 				</select>
 
 				<label>search term:</label><br />
-				<input type="text" name="term"><br />
+				<input type="text" name="term" id="searchfield"><br />
 
 				<input type="submit" value="Search" /><br />
 
@@ -46,6 +48,11 @@
 		</div>
 		<div class="column">
 			Status:
+		</div>
+
+
+		<div class="column">
+			<button id="testbutton">hello</button>
 		</div>
 	</div>
 
@@ -69,11 +76,34 @@
 		<div class="column">
 			<h1>preview</h1>
 			<div id="pdf_preview">
-				testing
+
 			</div>
+
+			<div>
+				<button id="prev">Previous</button>
+				<button id="next">Next</button>
+				&nbsp; &nbsp;
+				<span>Page: <span id="page_num"></span> / <span id="page_count"></span></span>
+			</div>
+
+			<canvas id="the-canvas" style="border: 1px solid black; direction: ltr;"></canvas>
+
 		</div>
 
 	</div>
+
+	<script>
+		async function getState() {
+			const url = "./getCurrentState";
+			const response = await fetch(url);
+			const jsonData = await response.json();
+			globalThis.State = jsonData;
+
+		}
+		globalThis.getState;
+		getState();
+	</script>
+
 </body>
 
 </html>
