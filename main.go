@@ -3,19 +3,21 @@ package main
 import (
 	"embed"
 	"encoding/gob"
-	"encoding/json"
 	"fmt"
+	"image/color"
 	"index/suffixarray"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"text/template"
 	"time"
 
+	//	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
 	"github.com/dslipak/pdf"
-	// webview "github.com/webview/webview_go"
 )
 
 type PDF struct {
@@ -85,92 +87,34 @@ func main() {
 	afterscan := time.Since(beforescan)
 	fmt.Println(fmt.Sprint(len(minuteList)) + " files indexed. It took " + fmt.Sprint(afterscan))
 
-	http.HandleFunc("/{$}", indexHandler)
+	myApp := app.New()
+	myWindow := myApp.NewWindow("Grid Layout")
 
-	searchHandler := func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println(len(minuteList))
-		r.ParseMultipartForm(10 << 20)
-		seekerTerm := r.FormValue("term")
+	text1 := canvas.NewText("1", color.White)
+	text2 := canvas.NewText("2", color.White)
+	image := canvas.NewImageFromFile("test_cat.png")
+	image.FillMode = canvas.ImageFillOriginal
+	grid := container.New(layout.NewGridLayout(3), text1, text2, image)
 
-		fmt.Println(r.FormValue("context"))
+	input := widget.NewEntry()
+	input.OnSubmitted("lol")
+	input.SetPlaceHolder("Enter text...")
 
-		fmt.Println("searching collection for: " + seekerTerm)
-		beforesearch := time.Now()
-		*currentResults = seekCollection(seekerTerm, minuteList)
-		aftersearch := time.Since(beforesearch)
-		*ActiveSearchTermptr = seekerTerm
+	printButton := widget.NewButton("Search", func() {
+		log.Println("Search term was:", input.Text)
+		result := seekCollection(input.Text, minuteList)
+		fmt.Println(len(result))
+	})
 
-		ActiveStateptr.Highlight = seekerTerm
+	text4 := canvas.NewText("This is the top bar", color.White)
+	topBar := container.New(layout.NewVBoxLayout(), text4, text4, input, printButton)
 
-		fmt.Println("there was a total of " + fmt.Sprint(len(searchHits)) + " hits for the term: " + seekerTerm + ". It took " + aftersearch.String())
-		resultTemp := template.Must(template.ParseFiles("resultsnip.html"))
-		err := resultTemp.Execute(w, searchHits)
-		check(err)
-	}
-	http.Handle("/", http.FileServer(http.Dir("."))) //husk en generel fileserver til css, scripts, ressourcer osv
-	http.HandleFunc("/search", searchHandler)
-
-	http.HandleFunc("/expandresult/{id}", expandHandler)
-	http.HandleFunc("/getpreview/{id}", previewHandler)
-	http.HandleFunc("/getCurrentState", getStateHandler)
-
-	fmt.Println("starting server at localhost:1337 for testing purposes. Press Ctrl+c to cancel.")
-
-	http.ListenAndServe(":1337", nil)
-	/*
-	   debug := true
-	   w := webview.New(debug)
-
-	   	if w == nil {
-	   		log.Fatalln("Failed to load webview.")
-	   	}
-
-	   defer w.Destroy()
-	   w.SetTitle("Minimal webview example")
-	   w.SetSize(800, 600, webview.HintNone)
-	   w.Navigate("http://127.0.0.1:1337")
-	   w.Run()
-	*/
-}
-
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	tmpl := template.Must(template.ParseFiles("index.html"))
-	fmt.Println("Endpoint \"/\" hit")
-	err := tmpl.Execute(w, nil)
-	check(err)
-}
-
-func expandHandler(w http.ResponseWriter, r *http.Request) {
-
-	key := r.PathValue("id")
-	*DocIDptr, err = strconv.Atoi(key)
-	check(err)
-	fmt.Println(searchHits[DocID].Matchfile.Filename)
-	ActiveStateptr.File = searchHits[DocID].Matchfile.Path
-
-	pageTemplate := template.Must(template.ParseFiles("pagesnip.html"))
-	err = pageTemplate.Execute(w, searchHits[DocID].Matches)
+	fullLayout := container.New(layout.NewBorderLayout(topBar, nil, nil, nil), topBar, grid)
+	myWindow.SetContent(fullLayout)
+	myWindow.ShowAndRun()
 
 }
 
-func previewHandler(w http.ResponseWriter, r *http.Request) {
-
-	key := r.PathValue("id")
-	*PageIDptr, err = strconv.Atoi(key)
-	check(err)
-	pageTemplate := template.Must(template.ParseFiles("previewsnip.html"))
-	ActiveStateptr.Page = searchHits[DocID].Matches[PageID].PageNumber
-	fmt.Println(ActiveState.Page)
-	err = pageTemplate.Execute(w, searchHits[DocID].Matches[PageID])
-
-}
-
-func getStateHandler(w http.ResponseWriter, r *http.Request) {
-
-	fmt.Println(ActiveState)
-	json.NewEncoder(w).Encode(ActiveState)
-
-}
 func seekCollection(searchterm string, collection []PDF) (results []result) {
 	for _, file := range collection {
 		var result result
