@@ -4,19 +4,14 @@ import (
 	"embed"
 	"encoding/gob"
 	"fmt"
-	"image/color"
 	"index/suffixarray"
 	"log"
 	"os"
 	"path/filepath"
 	"time"
 
-	//	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
-	"fyne.io/fyne/v2/widget"
+	"cogentcore.org/core/core"
+	"cogentcore.org/core/events"
 	"github.com/dslipak/pdf"
 )
 
@@ -87,31 +82,17 @@ func main() {
 	afterscan := time.Since(beforescan)
 	fmt.Println(fmt.Sprint(len(minuteList)) + " files indexed. It took " + fmt.Sprint(afterscan))
 
-	myApp := app.New()
-	myWindow := myApp.NewWindow("Grid Layout")
+	b := core.NewBody()
+	core.NewButton(b).SetText("Hello, World!")
+	tf := core.NewTextField(b)
 
-	text1 := canvas.NewText("1", color.White)
-	text2 := canvas.NewText("2", color.White)
-	image := canvas.NewImageFromFile("test_cat.png")
-	image.FillMode = canvas.ImageFillOriginal
-	grid := container.New(layout.NewGridLayout(3), text1, text2, image)
-
-	input := widget.NewEntry()
-	input.OnSubmitted("lol")
-	input.SetPlaceHolder("Enter text...")
-
-	printButton := widget.NewButton("Search", func() {
-		log.Println("Search term was:", input.Text)
-		result := seekCollection(input.Text, minuteList)
+	tf.OnFocusLost(func(e events.Event) {
+		result := seekCollection(tf.Text(), minuteList)
 		fmt.Println(len(result))
+		tf.SetFocus()
 	})
 
-	text4 := canvas.NewText("This is the top bar", color.White)
-	topBar := container.New(layout.NewVBoxLayout(), text4, text4, input, printButton)
-
-	fullLayout := container.New(layout.NewBorderLayout(topBar, nil, nil, nil), topBar, grid)
-	myWindow.SetContent(fullLayout)
-	myWindow.ShowAndRun()
+	b.RunMainWindow()
 
 }
 
