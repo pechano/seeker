@@ -1,21 +1,21 @@
 package main
 
 import (
-	"embed"
+	"cogentcore.org/core/core"
+	"cogentcore.org/core/events"
+	"cogentcore.org/core/icons"
+	"cogentcore.org/core/styles"
+	"cogentcore.org/core/styles/units"
 	"encoding/gob"
-	"encoding/json"
 	"fmt"
+	"github.com/dslipak/pdf"
+	"github.com/gen2brain/go-fitz"
+	"image"
 	"index/suffixarray"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"text/template"
 	"time"
-
-	"github.com/dslipak/pdf"
-	// webview "github.com/webview/webview_go"
 )
 
 type PDF struct {
@@ -51,32 +51,21 @@ type State struct {
 var searchHits []result
 var currentResults *[]result
 
-var DocID int
-var DocIDptr *int
-
-var PageID int
-var PageIDptr *int
-
-var ActiveSearchTerm string
-var ActiveSearchTermptr *string
-
-var ActiveState State
-var ActiveStateptr *State
-
 var err error
 
-// needed for release and distribution, bot during development and debugging
-//
-//go:embed index.html pagesnip.html previewsnip.html resultsnip.html htmx.min.js
-var staticFiles embed.FS
-
 func main() {
+	var ActiveState State
+	ActiveState.Highlight = "startup"
+	ActiveStateptr := &ActiveState
+
 	var minuteList []PDF
 	currentResults = &searchHits
-	DocIDptr = &DocID
-	PageIDptr = &PageID
-	ActiveSearchTermptr = &ActiveSearchTerm
-	ActiveStateptr = &ActiveState
+
+	var resultStrings []string
+	resultSptr := &resultStrings
+
+	var pageStrings []string
+	pageStringsPtr := &pageStrings
 
 	fmt.Println("scanning for all minutes:")
 	beforescan := time.Now()
@@ -85,90 +74,186 @@ func main() {
 	afterscan := time.Since(beforescan)
 	fmt.Println(fmt.Sprint(len(minuteList)) + " files indexed. It took " + fmt.Sprint(afterscan))
 
-	http.HandleFunc("/{$}", indexHandler)
+	//TOP LEVEL
+	b := core.NewBody()
+	b.SetTitle("libui float")
 
-	searchHandler := func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println(len(minuteList))
-		r.ParseMultipartForm(10 << 20)
-		seekerTerm := r.FormValue("term")
+	//TOP BAR
+	topbar := core.NewFrame(b)
 
-		fmt.Println(r.FormValue("context"))
+	topbar.Styler(func(s *styles.Style) {
+		s.CenterAll()
+	})
 
-		fmt.Println("searching collection for: " + seekerTerm)
-		beforesearch := time.Now()
-		*currentResults = seekCollection(seekerTerm, minuteList)
-		aftersearch := time.Since(beforesearch)
-		*ActiveSearchTermptr = seekerTerm
+	searchEntry := core.NewTextField(topbar)
 
-		ActiveStateptr.Highlight = seekerTerm
+	searchButton := core.NewButton(topbar).SetText("Search")
+	searchButton.SetIcon(icons.Search)
 
-		fmt.Println("there was a total of " + fmt.Sprint(len(searchHits)) + " hits for the term: " + seekerTerm + ". It took " + aftersearch.String())
-		resultTemp := template.Must(template.ParseFiles("resultsnip.html"))
-		err := resultTemp.Execute(w, searchHits)
-		check(err)
+	stateViewer := core.Bind(ActiveStateptr, core.NewForm(topbar))
+	stateViewer.SetReadOnly(true)
+
+	//COLUMNS
+	columns := core.NewFrame(b)
+
+	column1 := core.NewList(columns)
+	column1.SetSlice(resultSptr)
+	column1.SetReadOnly(true)
+	column1.Styler(func(s *styles.Style) {
+		s.Min.Set(units.Em(20))
+	})
+
+	var c1index int
+	column1.BindSelect(&c1index)
+
+	column2 := core.NewList(columns)
+	column2.SetSlice(pageStringsPtr)
+	column2.SetReadOnly(true)
+	column2.Styler(func(s *styles.Style) {
+		s.Min.Set(units.Em(30))
+		s.Grow.Set(1, 1)
+	})
+	var c2index int
+	var c3image image.Image
+	c3PTR := &c3image
+	column2.BindSelect(&c2index)
+
+	column1.OnChange(func(e events.Event) {
+		*pageStringsPtr = pageResultAdapter((*currentResults)[c1index].Matches)
+		ActiveStateptr.File = (*currentResults)[c1index].Matchfile.Filename
+		stateViewer.Update()
+		column2.Update()
+
+	})
+
+	c3image = pageExtractor("test.pdf", 1)
+	column3Frame := core.NewFrame(columns)
+	column3Frame.Styler(func(s *styles.Style) {
+		s.Direction = styles.Column
+	})
+	c3NavBar := core.NewFrame(column3Frame)
+	c3NavBar.Styler(func(s *styles.Style) {
+		s.Direction = styles.Row
+	})
+	c3NavBar.Styler(func(s *styles.Style) {
+		s.CenterAll()
+	})
+	c3PrevPage := core.NewButton(c3NavBar).SetText("Previous page")
+	c3PrevPage.SetIcon(icons.ArrowLeft)
+	c3OpenFile := core.NewButton(c3NavBar).SetText("Open File")
+	c3OpenFile.SetIcon(icons.Open)
+	c3NextPage := core.NewButton(c3NavBar).SetText("Next page")
+	c3NextPage.SetIcon(icons.ArrowRight)
+
+	column3 := core.NewImage(column3Frame)
+
+	column3.Styler(func(s *styles.Style) {
+		s.Min.Set(units.Em(80))
+		s.Grow.Set(1, 1)
+	})
+
+	column3.SetImage(c3image)
+	column2.OnChange(func(e events.Event) {
+		ActiveStateptr.Page = searchHits[c1index].Matches[c2index].PageNumber
+		stateViewer.Update()
+		*c3PTR = pageExtractor(searchHits[c1index].Matchfile.Path, searchHits[c1index].Matches[c2index].PageNumber)
+
+		column3.SetImage(c3image)
+		column3.Update()
+	})
+
+	//handle global events
+	b.OnFirst(events.Types(events.KeyDown), func(e events.Event) {
+		if e.KeyChord() == "Control+F" {
+			fmt.Println("ctrl+f pressed")
+			searchEntry.SetFocus()
+		}
+	})
+	topbar.OnFirst(events.Types(events.KeyDown), func(e events.Event) {
+		if e.KeyChord() == "Control+F" {
+			fmt.Println("ctrl+f pressed")
+			searchEntry.SetFocus()
+		}
+	})
+
+	columns.OnFirst(events.Types(events.KeyDown), func(e events.Event) {
+		if e.KeyChord() == "Control+F" {
+			fmt.Println("ctrl+f pressed")
+			searchEntry.SetFocus()
+		}
+	})
+	submitSearch := func(e events.Event) {
+
+		if e.KeyChord() == "ReturnEnter" || e.Type() == events.Click {
+			*currentResults = seekCollection(searchEntry.Text(), minuteList)
+			fmt.Println(len(*currentResults))
+			if len(*currentResults) == 0 {
+				ActiveStateptr.Page = 0
+				ActiveStateptr.File = "none"
+				ActiveStateptr.Highlight = ""
+				stateViewer.Update()
+				return
+			}
+
+			*resultSptr = resultAdapter(*currentResults)
+			*pageStringsPtr = pageResultAdapter((*currentResults)[0].Matches)
+			ActiveStateptr.Highlight = searchEntry.Text()
+			ActiveStateptr.File = (*currentResults)[0].Matches[0].PageFile
+			ActiveStateptr.Page = (*currentResults)[0].Matches[0].PageNumber
+			column1.Update()
+			column2.Update()
+			stateViewer.Update()
+
+		}
 	}
-	http.Handle("/", http.FileServer(http.Dir("."))) //husk en generel fileserver til css, scripts, ressourcer osv
-	http.HandleFunc("/search", searchHandler)
 
-	http.HandleFunc("/expandresult/{id}", expandHandler)
-	http.HandleFunc("/getpreview/{id}", previewHandler)
-	http.HandleFunc("/getCurrentState", getStateHandler)
+	searchButton.OnClick(submitSearch)
 
-	fmt.Println("starting server at localhost:1337 for testing purposes. Press Ctrl+c to cancel.")
+	searchEntry.On(events.Types(events.KeyDown), submitSearch)
 
-	http.ListenAndServe(":1337", nil)
-	/*
-	   debug := true
-	   w := webview.New(debug)
-
-	   	if w == nil {
-	   		log.Fatalln("Failed to load webview.")
-	   	}
-
-	   defer w.Destroy()
-	   w.SetTitle("Minimal webview example")
-	   w.SetSize(800, 600, webview.HintNone)
-	   w.Navigate("http://127.0.0.1:1337")
-	   w.Run()
-	*/
-}
-
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	tmpl := template.Must(template.ParseFiles("index.html"))
-	fmt.Println("Endpoint \"/\" hit")
-	err := tmpl.Execute(w, nil)
-	check(err)
-}
-
-func expandHandler(w http.ResponseWriter, r *http.Request) {
-
-	key := r.PathValue("id")
-	*DocIDptr, err = strconv.Atoi(key)
-	check(err)
-	fmt.Println(searchHits[DocID].Matchfile.Filename)
-	ActiveStateptr.File = searchHits[DocID].Matchfile.Path
-
-	pageTemplate := template.Must(template.ParseFiles("pagesnip.html"))
-	err = pageTemplate.Execute(w, searchHits[DocID].Matches)
+	b.RunMainWindow()
 
 }
 
-func previewHandler(w http.ResponseWriter, r *http.Request) {
+func pageExtractor(file string, page int) image.Image {
+	fmt.Printf("extracting page %v from %v \n", page, file)
+	doc, err := fitz.New(file)
+	if err != nil {
+		panic(err)
+	}
 
-	key := r.PathValue("id")
-	*PageIDptr, err = strconv.Atoi(key)
-	check(err)
-	pageTemplate := template.Must(template.ParseFiles("previewsnip.html"))
-	ActiveStateptr.Page = searchHits[DocID].Matches[PageID].PageNumber
-	fmt.Println(ActiveState.Page)
-	err = pageTemplate.Execute(w, searchHits[DocID].Matches[PageID])
+	defer doc.Close()
 
+	img, err := doc.Image(page)
+
+	//m := resize.Resize(800, 0, img, resize.Lanczos3)
+	if err != nil {
+		panic(err)
+	}
+	return img
 }
 
-func getStateHandler(w http.ResponseWriter, r *http.Request) {
+func resultAdapter(results []result) (output []string) {
+	for _, result := range results {
+		line := fmt.Sprintf("%v with %v hits", result.Matchfile.Filename, len(result.Matches))
+		output = append(output, line)
+	}
+	return output
+}
+func pdfAdapter(minutes []PDF) (output []string) {
+	for _, minute := range minutes {
+		line := fmt.Sprintf("File: %v with %v hits", minute.Filename, minute.Numpages)
+		output = append(output, line)
+	}
+	return output
+}
 
-	fmt.Println(ActiveState)
-	json.NewEncoder(w).Encode(ActiveState)
+func pageResultAdapter(pageResults []PageResult) (output []string) {
+	for _, pageResult := range pageResults {
+		line := fmt.Sprintf("Page number: %v", pageResult.PageNumber)
+		output = append(output, line)
+	}
+	return output
 
 }
 func seekCollection(searchterm string, collection []PDF) (results []result) {
@@ -186,8 +271,6 @@ func seekCollection(searchterm string, collection []PDF) (results []result) {
 				continue
 			}
 			result.Matches = append(result.Matches, resultPage)
-			fmt.Print("found term: at")
-			fmt.Printf("%v \n", resultPage.Index)
 		}
 
 		if len(result.Matches) == 0 {
@@ -195,6 +278,7 @@ func seekCollection(searchterm string, collection []PDF) (results []result) {
 		}
 		results = append(results, result)
 	}
+
 	return results
 }
 
