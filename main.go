@@ -1,9 +1,9 @@
 package main
 
 import (
-	"embed"
 	"encoding/gob"
 	"fmt"
+	"image"
 	"index/suffixarray"
 	"log"
 	"os"
@@ -12,7 +12,11 @@ import (
 
 	"cogentcore.org/core/core"
 	"cogentcore.org/core/events"
+	"cogentcore.org/core/icons"
+	"cogentcore.org/core/styles"
+	"cogentcore.org/core/styles/units"
 	"github.com/dslipak/pdf"
+	"github.com/gen2brain/go-fitz"
 )
 
 type PDF struct {
@@ -48,32 +52,21 @@ type State struct {
 var searchHits []result
 var currentResults *[]result
 
-var DocID int
-var DocIDptr *int
-
-var PageID int
-var PageIDptr *int
-
-var ActiveSearchTerm string
-var ActiveSearchTermptr *string
-
-var ActiveState State
-var ActiveStateptr *State
-
 var err error
 
-// needed for release and distribution, bot during development and debugging
-//
-//go:embed index.html pagesnip.html previewsnip.html resultsnip.html htmx.min.js
-var staticFiles embed.FS
-
 func main() {
+	var ActiveState State
+	ActiveState.Highlight = "startup"
+	ActiveStateptr := &ActiveState
+
 	var minuteList []PDF
 	currentResults = &searchHits
-	DocIDptr = &DocID
-	PageIDptr = &PageID
-	ActiveSearchTermptr = &ActiveSearchTerm
-	ActiveStateptr = &ActiveState
+
+	var resultStrings []string
+	resultSptr := &resultStrings
+
+	var pageStrings []string
+	pageStringsPtr := &pageStrings
 
 	fmt.Println("scanning for all minutes:")
 	beforescan := time.Now()
@@ -82,20 +75,156 @@ func main() {
 	afterscan := time.Since(beforescan)
 	fmt.Println(fmt.Sprint(len(minuteList)) + " files indexed. It took " + fmt.Sprint(afterscan))
 
+	//TOP LEVEL
 	b := core.NewBody()
-	core.NewButton(b).SetText("Hello, World!")
-	tf := core.NewTextField(b)
+	b.SetTitle("libui float")
 
-	tf.OnFocusLost(func(e events.Event) {
-		result := seekCollection(tf.Text(), minuteList)
-		fmt.Println(len(result))
-		tf.SetFocus()
+	//TOP BAR
+	topbar := core.NewFrame(b)
+
+	topbar.Styler(func(s *styles.Style) {
+		s.CenterAll()
 	})
+
+	searchEntry := core.NewTextField(topbar)
+
+	searchButton := core.NewButton(topbar).SetText("Search")
+	searchButton.SetIcon(icons.Search)
+
+	stateViewer := core.Bind(ActiveStateptr, core.NewForm(topbar))
+	stateViewer.SetReadOnly(true)
+
+	//COLUMNS
+	columns := core.NewFrame(b)
+
+	column1 := core.NewList(columns)
+	column1.SetSlice(resultSptr)
+	column1.SetReadOnly(true)
+	column1.Styler(func(s *styles.Style) {
+		s.Min.Set(units.Em(20))
+	})
+
+	var c1index int
+	column1.BindSelect(&c1index)
+
+	column2 := core.NewList(columns)
+	column2.SetSlice(pageStringsPtr)
+	column2.SetReadOnly(true)
+	column2.Styler(func(s *styles.Style) {
+		s.Min.Set(units.Em(30))
+		s.Grow.Set(1, 1)
+	})
+	var c2index int
+	column2.BindSelect(&c2index)
+
+	column2.OnChange(func(e events.Event) {
+		fmt.Println(c2index)
+		ActiveStateptr.Page = (*currentResults)[c1index].Matches[c2index].PageNumber
+		stateViewer.Update()
+
+	})
+
+	column1.OnChange(func(e events.Event) {
+		fmt.Println(c1index)
+		*pageStringsPtr = pageResultAdapter((*currentResults)[c1index].Matches)
+		ActiveStateptr.File = (*currentResults)[c1index].Matchfile.Filename
+		stateViewer.Update()
+		column2.Update()
+
+	})
+	var c3image image.Image
+
+	c3image = pageExtractor("test.pdf", 1)
+
+	column3 := core.Bind(&c3image, core.NewImage(columns))
+	//column3 := core.NewImage(columns)
+	//column3.SetImage(c3image)
+	column3.Update()
+
+	//handle global events
+	b.OnFirst(events.Types(events.KeyDown), func(e events.Event) {
+		if e.KeyChord() == "Control+F" {
+			fmt.Println("ctrl+f pressed")
+			searchEntry.SetFocus()
+		}
+	})
+
+	submitSearch := func(e events.Event) {
+
+		if e.KeyChord() == "ReturnEnter" || e.Type() == events.Click {
+			*currentResults = seekCollection(searchEntry.Text(), minuteList)
+			fmt.Println(len(*currentResults))
+			if len(*currentResults) == 0 {
+				ActiveStateptr.Page = 0
+				ActiveStateptr.File = "none"
+				ActiveStateptr.Highlight = ""
+				stateViewer.Update()
+				return
+			}
+
+			*resultSptr = resultAdapter(*currentResults)
+			*pageStringsPtr = pageResultAdapter((*currentResults)[0].Matches)
+			ActiveStateptr.Highlight = searchEntry.Text()
+			ActiveStateptr.File = (*currentResults)[0].Matches[0].PageFile
+			ActiveStateptr.Page = (*currentResults)[0].Matches[0].PageNumber
+			column1.Update()
+			column2.Update()
+			stateViewer.Update()
+
+		}
+	}
+
+	searchButton.OnClick(submitSearch)
+
+	searchEntry.On(events.Types(events.KeyDown), submitSearch)
 
 	b.RunMainWindow()
 
 }
 
+func pageExtractor(file string, page int) (img *image.RGBA) {
+	fmt.Println(page)
+	doc, err := fitz.New(file)
+	if err != nil {
+		panic(err)
+	}
+
+	defer doc.Close()
+
+	if err != nil {
+		panic(err)
+	}
+
+	img, err = doc.Image(page)
+	if err != nil {
+		panic(err)
+	}
+	return img
+}
+
+func resultAdapter(results []result) (output []string) {
+	for _, result := range results {
+		line := fmt.Sprintf("%v with %v hits", result.Matchfile.Filename, len(result.Matches))
+		output = append(output, line)
+	}
+	return output
+}
+func pdfAdapter(minutes []PDF) (output []string) {
+	for _, minute := range minutes {
+		line := fmt.Sprintf("File: %v with %v hits", minute.Filename, minute.Numpages)
+		output = append(output, line)
+	}
+	return output
+}
+
+func pageResultAdapter(pageResults []PageResult) (output []string) {
+	for _, pageResult := range pageResults {
+		line := fmt.Sprintf("Page number: %v", pageResult.PageNumber)
+		output = append(output, line)
+	}
+	return output
+
+}
 func seekCollection(searchterm string, collection []PDF) (results []result) {
 	for _, file := range collection {
 		var result result
@@ -111,8 +240,6 @@ func seekCollection(searchterm string, collection []PDF) (results []result) {
 				continue
 			}
 			result.Matches = append(result.Matches, resultPage)
-			fmt.Print("found term: at")
-			fmt.Printf("%v \n", resultPage.Index)
 		}
 
 		if len(result.Matches) == 0 {
@@ -120,6 +247,7 @@ func seekCollection(searchterm string, collection []PDF) (results []result) {
 		}
 		results = append(results, result)
 	}
+
 	return results
 }
 
