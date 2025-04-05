@@ -1,22 +1,21 @@
 package main
 
 import (
+	"cogentcore.org/core/core"
+	"cogentcore.org/core/events"
+	"cogentcore.org/core/icons"
+	"cogentcore.org/core/styles"
+	"cogentcore.org/core/styles/units"
 	"encoding/gob"
 	"fmt"
+	"github.com/dslipak/pdf"
+	"github.com/gen2brain/go-fitz"
 	"image"
 	"index/suffixarray"
 	"log"
 	"os"
 	"path/filepath"
 	"time"
-
-	"cogentcore.org/core/core"
-	"cogentcore.org/core/events"
-	"cogentcore.org/core/icons"
-	"cogentcore.org/core/styles"
-	"cogentcore.org/core/styles/units"
-	"github.com/dslipak/pdf"
-	"github.com/gen2brain/go-fitz"
 )
 
 type PDF struct {
@@ -115,31 +114,53 @@ func main() {
 		s.Grow.Set(1, 1)
 	})
 	var c2index int
+	var c3image image.Image
+	c3PTR := &c3image
 	column2.BindSelect(&c2index)
 
-	column2.OnChange(func(e events.Event) {
-		fmt.Println(c2index)
-		ActiveStateptr.Page = (*currentResults)[c1index].Matches[c2index].PageNumber
-		stateViewer.Update()
-
-	})
-
 	column1.OnChange(func(e events.Event) {
-		fmt.Println(c1index)
 		*pageStringsPtr = pageResultAdapter((*currentResults)[c1index].Matches)
 		ActiveStateptr.File = (*currentResults)[c1index].Matchfile.Filename
 		stateViewer.Update()
 		column2.Update()
 
 	})
-	var c3image image.Image
 
 	c3image = pageExtractor("test.pdf", 1)
+	column3Frame := core.NewFrame(columns)
+	column3Frame.Styler(func(s *styles.Style) {
+		s.Direction = styles.Column
+	})
+	c3NavBar := core.NewFrame(column3Frame)
+	c3NavBar.Styler(func(s *styles.Style) {
+		s.Direction = styles.Row
+	})
+	c3NavBar.Styler(func(s *styles.Style) {
+		s.CenterAll()
+	})
+	c3PrevPage := core.NewButton(c3NavBar).SetText("Previous page")
+	c3PrevPage.SetIcon(icons.ArrowLeft)
+	c3OpenFile := core.NewButton(c3NavBar).SetText("Open File")
+	c3OpenFile.SetIcon(icons.Open)
+	c3NextPage := core.NewButton(c3NavBar).SetText("Next page")
+	c3NextPage.SetIcon(icons.ArrowRight)
 
-	column3 := core.Bind(&c3image, core.NewImage(columns))
-	//column3 := core.NewImage(columns)
-	//column3.SetImage(c3image)
-	column3.Update()
+	column3 := core.NewImage(column3Frame)
+
+	column3.Styler(func(s *styles.Style) {
+		s.Min.Set(units.Em(80))
+		s.Grow.Set(1, 1)
+	})
+
+	column3.SetImage(c3image)
+	column2.OnChange(func(e events.Event) {
+		ActiveStateptr.Page = searchHits[c1index].Matches[c2index].PageNumber
+		stateViewer.Update()
+		*c3PTR = pageExtractor(searchHits[c1index].Matchfile.Path, searchHits[c1index].Matches[c2index].PageNumber)
+
+		column3.SetImage(c3image)
+		column3.Update()
+	})
 
 	//handle global events
 	b.OnFirst(events.Types(events.KeyDown), func(e events.Event) {
@@ -148,7 +169,19 @@ func main() {
 			searchEntry.SetFocus()
 		}
 	})
+	topbar.OnFirst(events.Types(events.KeyDown), func(e events.Event) {
+		if e.KeyChord() == "Control+F" {
+			fmt.Println("ctrl+f pressed")
+			searchEntry.SetFocus()
+		}
+	})
 
+	columns.OnFirst(events.Types(events.KeyDown), func(e events.Event) {
+		if e.KeyChord() == "Control+F" {
+			fmt.Println("ctrl+f pressed")
+			searchEntry.SetFocus()
+		}
+	})
 	submitSearch := func(e events.Event) {
 
 		if e.KeyChord() == "ReturnEnter" || e.Type() == events.Click {
@@ -182,8 +215,8 @@ func main() {
 
 }
 
-func pageExtractor(file string, page int) (img *image.RGBA) {
-	fmt.Println(page)
+func pageExtractor(file string, page int) image.Image {
+	fmt.Printf("extracting page %v from %v \n", page, file)
 	doc, err := fitz.New(file)
 	if err != nil {
 		panic(err)
@@ -191,11 +224,9 @@ func pageExtractor(file string, page int) (img *image.RGBA) {
 
 	defer doc.Close()
 
-	if err != nil {
-		panic(err)
-	}
+	img, err := doc.Image(page)
 
-	img, err = doc.Image(page)
+	//m := resize.Resize(800, 0, img, resize.Lanczos3)
 	if err != nil {
 		panic(err)
 	}
